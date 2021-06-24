@@ -1,0 +1,28 @@
+/* Colour scheme */
+
+// Base colours
+$base-color: #2f323b;
+$panel-color: #393c44;
+
+// Main colours
+$critical-color: #bf3e37;
+$major-color: #d78542;
+$minor-color: #ccc037;
+$resolved-color: #23ad35;
+
+// Main colour alternates
+$critical-color-faded: #bf3e3708;
+$major-color-faded: #d7854208;
+$minor-color-faded: #cfbe0008;
+$resolved-color-faded: #ccc03708;
+
+// Notification banner
+$notification-error-bg: #ffd2d2;
+$notification-error-text: #bf3e37;
+$notification-warning-bg: #feefb3;
+$notification-warning-text: #9f6000;
+
+// General text
+$text-color-high: #fff;
+$text-color-mid: hsla(0, 0%, 100%, 0.9);
+$text-color-low: hsla(0, 0%, 100%, 0.7);

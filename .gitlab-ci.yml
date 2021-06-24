@@ -1,0 +1,254 @@
+# Gitlab CI/CD pipeline file
+
+## Global and environment variables
+variables:
+  # Deployment server address
+  DEPLOYMENT_SERVER: [OMITTED]
+
+  # Staging/Prod environment vars
+  APP_STAGING_PORT: [OMITTED]
+  DB_STAGING_PORT: [OMITTED]
+  APP_PROD_PORT: [OMITTED]
+  DB_PROD_PORT: [OMITTED]
+
+  # Standard vars
+  HOME_SITE_CODE: [OMITTED]
+  PROXY: [OMITTED]
+
+  # API info
+  API_TOKEN: ${CI_API_BEARER}
+  EP_GET_ALL_DATA: data/all
+  EP_GET_PROCESSED_DATA: data/min
+  EP_GET_EVENTS_SINCE_DATE: data/events?
+  EP_POST: data/update
+
+## Cache the node_modules folder between builds on the same branch
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+
+stages:
+  - build_client_staging
+  - build_server_staging
+  - test
+  - deploy_staging
+  - build_client_production
+  - build_server_production
+  - release
+  - deploy_production
+
+## Pre-script execution
+before_script:
+  - echo $dockerTag
+
+##########################
+## Development/Staging ###
+##########################
+
+## Build client
+staging_build_1:
+  stage: build_client_staging
+  image: node:12
+  environment: staging
+  script:
+    - echo "Building with:"
+    - echo "Deployment server - ${DEPLOYMENT_SERVER}"
+    - echo "API Port - ${APP_STAGING_PORT}"
+    - export HTTP_PROXY=$PROXY
+    - export HTTPS_PROXY=$PROXY
+    - export VUE_APP_SERVER_PATH=http://$DEPLOYMENT_SERVER:$APP_STAGING_PORT
+    - export VUE_APP_API_ALL_DATA=http://$DEPLOYMENT_SERVER:$APP_STAGING_PORT/_api/data/min
+    - export VUE_APP_API_MORE_EVENTS=http://$DEPLOYMENT_SERVER:$APP_STAGING_PORT/_api/data/events
+    - npm install --prefix ./client --progress=false
+    - npm run  --prefix ./client build
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - client/dist
+  except:
+    - production
+
+## Build server
+staging_build_2:
+  stage: build_server_staging
+  image: docker:19.03
+  services:
+    - name: docker:18.06-dind
+      command: ["--insecure-registry=[OMITTED]"]
+  environment: staging
+  before_script:
+    - echo "Build stage:"
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - "docker build -t ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHORT_SHA} \
+      --build-arg env=$CI_ENVIRONMENT_NAME \
+      --build-arg proxy=$PROXY \
+      --build-arg server=$DEPLOYMENT_SERVER:$APP_STAGING_PORT \
+      --build-arg db=mongodb://$DEPLOYMENT_SERVER:$DB_STAGING_PORT/$CI_ENVIRONMENT_NAME \
+      --build-arg port=$APP_STAGING_PORT \
+      --build-arg api_url=http://$DEPLOYMENT_SERVER:$APP_STAGING_PORT/_api/
+      --build-arg ep_post=$EP_POST \
+      --build-arg home_site_code=$HOME_SITE_CODE \
+      ."
+    - docker push ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHORT_SHA}
+  except:
+    - production
+
+## Testing stage
+testing:
+  stage: test
+  environment: staging
+  script:
+    - echo "This is where the testing tasks will go"
+    ## Pull image with commit SHA
+    ## Start image
+    ## Run test file (Mocha, etc)
+  except:
+    - production
+
+## Deploy to staging
+deploy_staging:
+  stage: deploy_staging
+  image: docker:19.03
+  services:
+    - name: docker:18.06-dind
+  environment: staging
+  variables:
+    PROJECT_NAME: sm_${CI_ENVIRONMENT_NAME}
+  before_script:
+    - echo "Deploying to ${CI_ENVIRONMENT_NAME}:"
+    - echo "Server port - ${APP_STAGING_PORT}"
+    - echo "Database port - ${DB_STAGING_PORT}"
+    - 'which ssh-agent || ( apt-get -o Acquire::http::proxy="[OMITTED]" update -y && apt-get -o Acquire::http::proxy="[OMITTED]" install openssh-client -y )'
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - eval $(ssh-agent -s)
+    - '[[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
+  script:
+    - echo "$DEPLOY_SERVER_KEY" | tr -d '\r' | ssh-add - > /dev/null
+    - echo "CI_PROJECT_IMAGE_PATH=${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHORT_SHA}" >> .env
+    - echo "APP_PORT=${APP_STAGING_PORT}" >> .env
+    - echo "DB_PORT=${DB_STAGING_PORT}" >> .env
+    - echo "API_TOKEN=${API_TOKEN}" >> .env
+    - echo "COMPOSE_PROJECT_NAME=${PROJECT_NAME}" >> .env
+    - echo "CI_REGISTRY=${CI_REGISTRY}" >> .env
+    - echo "CI_REGISTRY_USER=${CI_REGISTRY_USER}" >> .env
+    - echo "CI_REGISTRY_PASSWORD=T{CI_REGISTRY_PASSWORD}" >> .env
+    - scp -r .env ./docker-compose.yml administrator@$DEPLOYMENT_SERVER:~/
+    - ssh administrator@$DEPLOYMENT_SERVER "docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}"
+    - ssh administrator@$DEPLOYMENT_SERVER "docker-compose stop"
+    - ssh administrator@$DEPLOYMENT_SERVER 'if [ "$(docker ps -a | grep sm_server_staging)" ]; then docker-compose rm --force server; fi'
+    - ssh administrator@$DEPLOYMENT_SERVER "docker pull ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHORT_SHA}"
+    - ssh administrator@$DEPLOYMENT_SERVER "docker-compose up -d"
+    - ssh administrator@$DEPLOYMENT_SERVER "rm .env ./docker-compose.yml"
+  only:
+    - master
+
+##########################
+## Production ###
+##########################
+
+## Build client
+production_build_1:
+  stage: build_client_production
+  image: node:12
+  environment: production
+  script:
+    - export HTTP_PROXY=$PROXY
+    - export HTTPS_PROXY=$PROXY
+    - export VUE_APP_SERVER_PATH=http://$DEPLOYMENT_SERVER:$APP_PROD_PORT
+    - export VUE_APP_API_ALL_DATA=http://$DEPLOYMENT_SERVER:$APP_PROD_PORT/_api/data/min
+    - export VUE_APP_API_MORE_EVENTS=http://$DEPLOYMENT_SERVER:$APP_PROD_PORT/_api/data/events
+    - npm install --prefix ./client --progress=false
+    - npm run  --prefix ./client build
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - client/dist
+  only:
+    - production
+
+## Build server
+production_build_2:
+  stage: build_server_production
+  image: docker:19.03
+  services:
+    - name: docker:18.06-dind
+      command: ["--insecure-registry=[OMITTED]"]
+  environment: production
+  before_script:
+    - echo "Build stage:"
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - "docker build -t ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHORT_SHA} \
+      --build-arg env=$CI_ENVIRONMENT_NAME \
+      --build-arg proxy=$PROXY \
+      --build-arg server=$DEPLOYMENT_SERVER:$APP_PROD_PORT \
+      --build-arg db=mongodb://$DEPLOYMENT_SERVER:$DB_PROD_PORT/$CI_ENVIRONMENT_NAME \
+      --build-arg port=$APP_PROD_PORT \
+      --build-arg api_url=http://$DEPLOYMENT_SERVER:$APP_PROD_PORT/_api/ \
+      --build-arg ep_post=$EP_POST \
+      --build-arg home_site_code=$HOME_SITE_CODE \
+      ."
+    - "docker push ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHORT_SHA}"
+  only:
+    - production
+
+## Release stage
+release:
+  stage: release
+  image: docker:19.03
+  services:
+    - name: docker:18.06-dind
+      command: ["--insecure-registry=[OMITTED]"]
+  environment: production
+  variables:
+    DOCKER_DRIVER: overlay2
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - "docker pull ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHORT_SHA}"
+    - "docker tag ${CI_REGISTRY}/${CI_PROJECT_PATH}:${CI_COMMIT_SHORT_SHA} ${CI_REGISTRY}/${CI_PROJECT_PATH}:latest"
+    - "docker push ${CI_REGISTRY}/${CI_PROJECT_PATH}:latest"
+  only:
+    - production
+
+## Deploy to production
+deploy_production:
+  stage: deploy_production
+  image: docker:19.03
+  services:
+    - name: docker:18.06-dind
+  environment: production
+  variables:
+    PROJECT_NAME: sm_${CI_ENVIRONMENT_NAME}
+  before_script:
+    - echo "Deploying to ${CI_ENVIRONMENT_NAME}:"
+    - echo "Server port - ${APP_PROD_PORT}"
+    - echo "Database port - ${DB_PROD_PORT}"
+    - 'which ssh-agent || ( apt-get -o Acquire::http::proxy="[OMITTED]" update -y && apt-get -o Acquire::http::proxy="[OMITTED]" install openssh-client -y )'
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - eval $(ssh-agent -s)
+    - '[[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
+  script:
+    - echo "$DEPLOY_SERVER_KEY" | tr -d '\r' | ssh-add - > /dev/null
+    - echo "CI_PROJECT_IMAGE_PATH=${CI_REGISTRY}/${CI_PROJECT_PATH}:latest" >> .env
+    - echo "APP_PORT=${APP_PROD_PORT}" >> .env
+    - echo "DB_PORT=${DB_PROD_PORT}" >> .env
+    - echo "API_TOKEN=${API_TOKEN}" >> .env
+    - echo "COMPOSE_PROJECT_NAME=${PROJECT_NAME}" >> .env
+    - echo "CI_REGISTRY=${CI_REGISTRY}" >> .env
+    - echo "CI_REGISTRY_USER=${CI_REGISTRY_USER}" >> .env
+    - echo "CI_REGISTRY_PASSWORD=T{CI_REGISTRY_PASSWORD}" >> .env
+    - scp -r .env ./docker-compose.yml administrator@$DEPLOYMENT_SERVER:~/
+    - ssh administrator@$DEPLOYMENT_SERVER "docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}"
+    - ssh administrator@$DEPLOYMENT_SERVER "docker-compose stop"
+    - ssh administrator@$DEPLOYMENT_SERVER 'if [ "$(docker ps -a | grep sm_server_prod)" ]; then docker-compose rm --force server; fi'
+    - ssh administrator@$DEPLOYMENT_SERVER "docker pull ${CI_REGISTRY}/${CI_PROJECT_PATH}:latest"
+    - ssh administrator@$DEPLOYMENT_SERVER "docker-compose up -d"
+    - ssh administrator@$DEPLOYMENT_SERVER "rm .env ./docker-compose.yml"
+  only:
+    - production

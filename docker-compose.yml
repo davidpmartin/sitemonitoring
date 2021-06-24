@@ -1,0 +1,23 @@
+### Docker-Compose ###
+# This is the docker-compose file executed on the deployment server by gitlab-ci to deploy the services
+
+version: "3.0"
+
+services:
+  server:
+    image: ${CI_PROJECT_IMAGE_PATH}
+    environment:
+      - API_TOKEN=${API_TOKEN}
+    restart: always
+    ports:
+      - ${APP_PORT}:${APP_PORT}
+    links:
+      - db
+    depends_on:
+      - db
+
+  db:
+    image: mongo
+    restart: always
+    ports:
+      - ${DB_PORT}:27017
