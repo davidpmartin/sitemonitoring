@@ -1,8 +1,9 @@
 # SiteMonitoring
 
-![main](/assets/images/main.png)
+![main](/assets/images/main.PNG)
 #### Main dashboard - showing an overview of current issues, and an event log on the right-hand side
 
+## Overview
 This web application was built to collect, store and present real-time monitoring data from critical services and systems across educational sites, allowing proactive resolution and remediation of outages and faults.
 
 The frontend is a responsive web ui showing alerts, counters, and other relevant information about the current status of sites. On page load a web socket is opened with the backend server and the client listens for alerts that new data is available, at which point it GET's the new data to update the page.
@@ -19,8 +20,8 @@ The version presented in this repository is just for demonstrative purposes as i
 
 ## Examples
 
-![details](/assets/images/details.png)
+![details](/assets/images/details.PNG)
 #### Expanded Issue view - shows current issues with more detail, including the IP/Hostnames
 
-![events](/assets/images/events.png)
+![events](/assets/images/events.PNG)
 #### Expanded Events view - shows a complete history of all previous events
